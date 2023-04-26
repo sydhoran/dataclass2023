@@ -1,0 +1,475 @@
+---
+title: "StatsClass_Analysis"
+author: "Sydney Horan"
+date: '2023-04-15'
+output: html_document
+---
+Installing and loading required packages
+
+```{r error=FALSE, warning=FALSE, message=FALSE}
+#Packages... I don't know if all of these are useful but just in case
+library(car) #ANOVA
+library(lme4) #GLMM and GLM
+library(glmmTMB) #Poisson lots of zeros
+library(MASS) #glm.nb negative binomial lots of zeros 
+library(tidyverse)
+library(sjPlot)
+library(vegan)
+library(cowplot)
+library(ggplot2)
+library(ggpubr)
+library(ggbeeswarm)
+library(sjstats)
+library(showtext) #Adding some more fonts
+font_add_google("Roboto", "Roboto")
+
+data <- read.csv("Horan_CT2022_NestlingLevelData_SMI_Apr2023.csv") #Reading in the dataset (nestling)
+nestdata <- read.csv("Horan_CT2022_NestLevelData.csv") #Reading in dataset (nest level)
+```
+#### Question 1 - Effect of treatment on nest temperature
+* Fixed Effect: Treatment
+* Response Variable:Temperature
+* Random Effect: None
+* Co-variate: Julian Day (ie. time of year)
+```{r}
+#Step 1: Test for Normality 
+shapiro.test(nestdata$NestTemperature_C)
+#W = 0.93054, p-value = 0.521
+# The p-value is greater than 0.05. The data is normally distributed.
+
+qqnorm(nestdata$NestTemperature_C)
+qqline(nestdata$NestTemperature_C, col = "gray")
+
+#Step 2: Creating the model
+model1 <- glm(NestTemperature_C~Treatment+JulianHatchDay, family=gaussian, nestdata)
+Anova(model1)
+#Response: NestTemperature_C
+             #  LR Chisq Df Pr(>Chisq)    
+#Treatment        30.638  1  3.109e-08 ***
+#JulianHatchDay   15.972  1  6.427e-05 ***
+summary(model1)
+
+#Step 2: Visualizing
+p1<- ggplot(nestdata, aes(x=Treatment, y=NestTemperature_C)) + 
+  geom_boxplot()+
+  geom_jitter(position=position_jitter(0.2))+
+  labs(title="Effect of Treatment on Temperature",x="Treatment", y = "Average Nest Temperature (°C)")+
+  theme_classic()
+
+#plot_model(model1, type="pred", terms = c("JulianHatchDay", "Treatment"))
+
+table1 <- Anova(model1)
+kable(table1, digits = 3) # the digits argument controls rounding
+```
+
+Trying to pretty up the box plot..
+
+```{r}
+tiff("tempfig.tiff", units="in", width=6, height=4, res=500)
+treatmentbp <- nestdata %>% 
+  ggplot(aes(x = Treatment, y = NestTemperature_C)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(aes(fill=factor(Treatment)), shape=21, colour="black", size=3, stroke=1, width=.2) +
+  scale_fill_manual(values = c("#227c9d", "#fe6d73")) +
+  labs(x = "",
+       y = "Average Nest Temperature (°C)\n") +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", family="Roboto", hjust = 0.5),
+    axis.text.x = element_text(size = 13, face = "bold", angle = 0, family="Roboto"),
+    axis.title=element_text(size=16, face="bold", family="Roboto"),
+    axis.text.y = element_text(size = 12),
+    legend.position = "None",
+    strip.text = element_text(size = 16),
+    panel.background = element_blank(), #changes background color. remove "#" before this if you would prefer a white background
+    panel.border=element_rect(fill=NA),
+    strip.background = element_rect(fill = NA, colour = "black"),
+    panel.grid.major.y = element_line(color="gray62",linetype="dotted"),
+          panel.grid.minor.y = element_line(color="gray64",linetype="dotted"),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()
+  )
+
+treatmentbp + ggtitle("Effect of Treatment on Nest Temperature")
+```
+
+
+#### Question 2 - Effect of treatment on immune gene expression
+* Fixed Effect: Treatment
+* Response Variable: IL-6, HSP70
+* Random Effect: NestID
+* Co-variate: Julian Day (ie. time of year), Sex, Age
+
+##### Testing expression of IL-6 in response to temperature
+
+```{r}
+#Step 1: Test for Normality 
+shapiro.test(data$IL.6_GAPDH)
+#W = 0.64653, p-value = 2.066e-07
+# The p-value is less than 0.05. The data is not normally distributed. Let's log10 transform the data.
+
+shapiro.test(data$IL.6log_GAPDH)
+#W=0.96081, p-value = 0.3065
+# The p-value is more than 0.05. The data is now normally distributed.
+
+model2 <- lmer(IL.6log_GAPDH~Treatment+Sex+Age+JulianDate+(1|Nest.ID), data=data)
+Anova(model2)
+# Response: IL.6log_GAPDH
+#            Chisq Df Pr(>Chisq)  
+# Treatment  2.9240  1    0.08727 .
+# Sex        2.3222  1    0.12754  
+# Age        0.1970  1    0.65714  
+# JulianDate 3.2181  1    0.07283 .
+summary(model2)
+
+#Running without covariates, out of curiosity
+#model2a <- lmer(IL.6log_GAPDH~Treatment+(1|Nest.ID), data=data)
+#Anova(model2a)
+  # Chisq Df Pr(>Chisq)
+#Treatment 2.1226  1     0.1451
+#Looks like they are definitely necessary.
+
+```
+
+```{r}
+# Messing around with visualizing the data. Here is a plot of effect sizes.
+sjPlot::plot_model(model2)
+sjPlot::plot_model(model2, 
+                   axis.labels=c("Julian Date", "Age", "Sex (M)", "Treatment (Control)"),
+                   show.values=TRUE, show.p=TRUE,
+                   title="Effect of Heat on IL-6 Expression")
+
+#Making the above plot into a table 
+sjPlot:: tab_model(model2)
+sjPlot::tab_model(model2, 
+                  show.re.var= TRUE, 
+                  pred.labels =c("(Intercept)", "Treatment (Control)", "Sex (M)", "Age", "Julian Date"),
+                  dv.labels= "Effect of Heat on IL-6 Expression")
+
+#Getting the effects of the treatment fixed effect specifically
+effects_heat <- effects::effect(term= "Treatment", mod = model2)
+summary(effects_heat)
+#Treatment effect
+#Treatment
+#       Heat     No Heat 
+#-0.37609486  0.02782042 
+
+# Lower 95 Percent Confidence Limits
+#Treatment
+#      Heat    No Heat 
+#-0.7130327 -0.3055634 
+
+# Upper 95 Percent Confidence Limits
+#Treatment
+#       Heat     No Heat 
+# -0.03915705  0.36120420 
+
+#Putting this into a dataframe to graph potentially
+x_heat <- as.data.frame(effects_heat)
+```
+
+
+###### Graphing treatment vs IL-6 expression mixed effects model
+
+```{r}
+# data = raw data file
+#x_heat = effects of treatment statistical values from above model
+plot1 <- ggplot(data, aes(x = Treatment, y = IL.6log_GAPDH, color = Treatment)) +
+  geom_beeswarm(cex = 4, size=2) +
+  scale_color_brewer(palette = "Pastel1") +
+  scale_y_continuous(limits=c(-1,1), breaks = seq(-1, 1, by = 1)) +
+  stat_summary(fun.data=function(x){mean_cl_normal(x, conf.int=.683)}, geom="errorbar", width=0.05, alpha=0.7, color="black") +
+  stat_summary(fun=mean, geom="point", color="black") +
+  labs(x = "",
+       y = "Relative Gene Expression") +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", family="Roboto", hjust = 0.5),
+    axis.text.x=element_text(size = 16, angle = 0, family="Roboto", face="bold"),
+    axis.title=element_text(size=16, family="Roboto", face="bold"),
+    axis.text.y = element_text(size = 16, family="Roboto", face="bold"),
+    legend.position = "None",
+    strip.text = element_text(size = 16),
+    panel.background = element_blank(),
+    panel.border=element_rect(fill=NA),
+    strip.background = element_rect(fill = NA, colour = "black"),
+  )
+plot1 #<- #plot1 + ggtitle("Effect of Heat on IL-6 Expression")
+#plot1 + geom_point(data=x_heat, aes(x=Treatment, y=fit), color="black") # If you run this, it will add a data point that's a mean as predicted by the model plot. I cannot get it to add error bars, just this point.
+
+
+#QUESTION: How do I get error bars to work on this when I have the SE and confidence intervals already in a dataframe (x_heat)? Or am I going about this wrong?
+```
+
+
+#### Testing New Code for graphing Model Output - 24 Apr 2023
+
+```{r}
+
+# simple way to plot and check the model
+plot_model(model2, type = "pred", terms = c("Treatment")) 
+#IT WORKED!!
+
+#putting into a dataframe just in case
+model2df <- get_model_data(model2, type = "pred", terms = c("Treatment"))
+model2df <- as.data.frame(model2df)
+
+write.csv(model2df, "~/Documents/StatsClass_2023/StatsClass/FinalProject/model2_data.csv", row.names=FALSE)
+
+# Predicted model values shown in the figure:
+```
+
+
+##### Testing expression of HSP70 in response to temperature
+
+```{r}
+#Step 1: Test for Normality 
+shapiro.test(data$HSP70_GAPDH)
+#W = 0.76891, p-value = 1.444e-05
+# The p-value is less than 0.05. The data is not normally distributed. Let's log10 transform the data.
+
+shapiro.test(data$HSP70log._GAPDH)
+#W=0.96081, p-value = 0.2117
+# The p-value is more than 0.05. The data is now normally distributed.
+
+model3 <- lmer(HSP70log._GAPDH~Treatment+Sex+Age+JulianDate+(1|Nest.ID), data=data)
+Anova(model3)
+        #Response: HSP70log._GAPDH
+         #   Chisq Df Pr(>Chisq)  
+#Treatment  2.8662  1    0.09046 .
+#Sex        4.9965  1    0.02540 *
+#Age        2.9015  1    0.08850 .
+#JulianDate 4.2318  1    0.03967 *
+summary(model3)
+
+#Out of curiosity, let's run it without the co-variates.
+#model3a <- lmer(HSP70log._GAPDH~Treatment+(1|Nest.ID), data=data)
+#Anova(model3a)
+  # Chisq Df Pr(>Chisq)
+#Treatment 0.8148  1     0.3667
+#Much sadness.
+
+plot_model(model3, type="pred", terms = c("Sex"))
+```
+
+Let us now attempt to plot some things.
+
+```{r}
+plot2 <- ggplot(data, aes(x = Treatment, y = HSP70log._GAPDH, color = Treatment)) +
+  geom_beeswarm(cex = 4, size=2) +
+  scale_color_brewer(palette = "Pastel1") +
+  scale_y_continuous(limits=c(-1,1), breaks = seq(-1, 1, by = 1)) +
+  stat_summary(fun.data=function(x){mean_cl_normal(x, conf.int=.683)}, geom="errorbar", width=0.05, alpha=0.7, color="black") +
+  stat_summary(fun=mean, geom="point", color="black") +
+  labs(x = "",
+       y = "Relative Gene Expression") +
+  #facet_grid(. ~ UrbanOrRural, scales = "free") +
+  theme(
+    #axis.text.y.left = element_blank(), #remove y axis labels
+    plot.title = element_text(size = 16, face = "bold", family="Roboto", hjust = 0.5),
+    axis.text.x=element_text(size = 16, angle = 0, family="Roboto", face="bold"),
+    axis.title=element_text(size=16, family="Roboto", face="bold"),
+    axis.text.y = element_text(size = 16, family="Roboto", face="bold"),
+    legend.position = "None",
+    strip.text = element_text(size = 16),
+    panel.background = element_blank(),
+    panel.border=element_rect(fill=NA),
+    strip.background = element_rect(fill = NA, colour = "black"),
+  )
+plot2
+```
+
+Making this plot easier to look at when I combine it with the other one-
+
+```{r, include=FALSE}
+#I am now going to remove the Y axis from this just to make it pretty when I combine the two graphs.
+
+plot2a <- ggplot(data, aes(x = Treatment, y = HSP70log._GAPDH, color = Treatment)) +
+  geom_beeswarm(cex = 4, size=2) +
+  scale_color_brewer(palette = "Pastel1") +
+  scale_y_continuous(limits=c(-1,1), breaks = seq(-1, 1, by = 1)) +
+stat_summary(fun.data=function(x){mean_cl_normal(x, conf.int=.683)}, geom="errorbar", width=0.05, alpha=0.7, color="black") +
+stat_summary(fun=mean, geom="point", color="black") +
+  labs(x = "",
+       y = "") +
+  #facet_grid(. ~ UrbanOrRural, scales = "free") +
+  theme(
+    #axis.text.y.left = element_blank(), #remove y axis labels
+    plot.title = element_text(size = 16, face = "bold", family="Roboto", hjust = 0.5),
+    axis.text.x=element_text(size = 16, angle = 0, family="Roboto", face="bold"),
+    axis.title=element_text(size=16, family="Roboto", face="bold"),
+    axis.text.y = element_text(size = 16, family="Roboto", face="bold"),
+    legend.position = "None",
+    strip.text = element_text(size = 16),
+    panel.background = element_blank(),
+    panel.border=element_rect(fill=NA),
+    strip.background = element_rect(fill = NA, colour = "black"),
+  )
+plot2a #<- plot2a + ggtitle("Effect of Heat on HSP70 Expression")
+```
+
+#### Plotting effect size
+
+```{r}
+# Messing around with visualizing the data. Here is a plot of effect sizes.
+sjPlot::plot_model(model3)
+sjPlot::plot_model(model3, 
+                   axis.labels=c("Julian Date", "Age", "Sex (M)", "Treatment (Control)"),
+                   show.values=TRUE, show.p=TRUE,
+                   title="Effect of Heat on HSP70 Expression")
+
+#Making the above plot into a table 
+sjPlot:: tab_model(model3)
+sjPlot::tab_model(model3, 
+                  show.re.var= TRUE, 
+                  pred.labels =c("(Intercept)", "Treatment (Control)", "Sex (M)", "Age", "Julian Date"),
+                  dv.labels= "Effect of Heat on IL-6 Expression")
+
+#Getting the effects of the treatment fixed effect specifically
+hspeffects_heat <- effects::effect(term= "Treatment", mod = model3)
+summary(hspeffects_heat)
+#Treatment effect
+#Treatment
+ #      Heat     No Heat 
+#-0.29838632  0.07060448 
+
+# Lower 95 Percent Confidence Limits
+#Treatment
+#      Heat    No Heat 
+#-0.6082208 -0.2397373 
+
+# Upper 95 Percent Confidence Limits
+# Treatment
+#      Heat    No Heat 
+# 0.01144822 0.38094622 
+
+#Putting this into a dataframe to graph potentially
+x_heathsp <- as.data.frame(hspeffects_heat)
+```
+
+
+#### Combining into one graph
+
+```{r, warning=FALSE}
+tiff("combined.tiff", units="in", width=6, height=4, res=500)
+combined <- ggarrange(plot1 + ggtitle("IL-6"), plot2a + ggtitle("HSP70"))
+annotate_figure(combined,
+                top = text_grob("Effect of Heat on Gene Expression", face="bold", size="20", family="Roboto")
+                )
+#QUESTION: The y axis scale is different between these two (though it is close!!), any way to quickly standardize it?
+```
+
+
+#### Question 3 - Effect of sex on immune gene expression (IL-6)
+* Fixed Effect: Treatment * Sex
+* Response Variable: IL-6
+* Random Effect: NestID
+* Co-variate: Julian Day (ie. time of year)
+
+```{r}
+model4 <- lmer(IL.6log_GAPDH~Treatment*Sex+JulianDate+(1|Nest.ID), data=data)
+Anova(model4)
+            #           Chisq Df Pr(>Chisq)  
+#Treatment     3.0173  1    0.08238 .
+#Sex           1.9854  1    0.15882  
+#JulianDate    2.7796  1    0.09547 .
+#Treatment:Sex 0.1150  1    0.73455  
+summary(model4)
+
+plot_model(model4, type = "pred", terms = c("Treatment", "Sex")) 
+```
+
+Plotting
+
+```{r}
+tiff("il6sexfig.tiff", units="in", width=6, height=4, res=500)
+plot3 <- data %>%
+  filter(!is.na(Sex)) %>%
+  ggplot(aes(x = Treatment, y = IL.6log_GAPDH, color = Treatment)) +
+  geom_beeswarm(cex = 4, size=2) +
+  scale_color_brewer(palette = "Pastel1") +
+  stat_summary(fun.data=function(x){mean_cl_normal(x, conf.int=.683)}, geom="errorbar", width=0.05, alpha=0.7, color="black") +
+  stat_summary(fun=mean, geom="point", color="black") +
+  facet_grid(. ~ Sex, scales = "free") +
+  labs(x = "",
+       y = "Relative Gene Expression (of IL-6)") +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", family="Roboto", hjust = 0.5),
+    axis.text.x = element_text(size = 13, angle = 0,  family="Roboto", face="bold"),
+    axis.title=element_text(size=16, family="Roboto", face="bold"),
+    axis.text.y = element_text(size = 12, family="Roboto", face="bold"),
+    legend.position = "None",
+    strip.text = element_text(size = 16, family="Roboto", face="bold"),
+    panel.background = element_blank(),
+    panel.border=element_rect(fill=NA),
+    strip.background = element_rect(fill = NA, colour = "black"),
+  )
+  
+plot3 + ggtitle("Effect of Sex on Immune Gene Expression")
+#I'm not sure why it won't use the same palette as above. There's also a probably more intuitive way to visualize this.... 
+```
+
+```{r}
+model5 <- lmer(HSP70log._GAPDH~Treatment*Sex+JulianDate+(1|Nest.ID), data=data)
+Anova(model5)
+```
+
+```{r}
+model6 <- lmer(HSP70log._GAPDH~Treatment*JulianDate+Sex+(1|Nest.ID), data=data)
+Anova(model6)
+```
+
+```{r}
+model7 <- lmer(IL.6log_GAPDH~Treatment+JulianDate*Sex+(1|Nest.ID), data=data)
+Anova(model7)
+summary(model7)
+```
+
+```{r}
+tiff("hsp70sexfig.tiff", units="in", width=6, height=4, res=500)
+plot4 <- data %>%
+  filter(!is.na(Sex)) %>%
+  ggplot(aes(x = Treatment, y = HSP70log._GAPDH, color = Treatment)) +
+  geom_beeswarm(cex = 4, size=2) +
+  scale_color_brewer(palette = "Pastel1") +
+  stat_summary(fun.data=function(x){mean_cl_normal(x, conf.int=.683)}, geom="errorbar", width=0.05, alpha=0.7, color="black") +
+  stat_summary(fun=mean, geom="point", color="black") +
+  facet_grid(. ~ Sex, scales = "free") +
+  labs(x = "",
+       y = "Relative Gene Expression (of HSP70)") +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", family="Roboto", hjust = 0.5),
+    axis.text.x = element_text(size = 13, angle = 0,  family="Roboto", face="bold"),
+    axis.title=element_text(size=16, family="Roboto", face="bold"),
+    axis.text.y = element_text(size = 12, family="Roboto", face="bold"),
+    legend.position = "None",
+    strip.text = element_text(size = 16, family="Roboto", face="bold"),
+    panel.background = element_blank(),
+    panel.border=element_rect(fill=NA),
+    strip.background = element_rect(fill = NA, colour = "black"),
+  )
+  
+plot4 + ggtitle("Effect of Sex on Immune Gene Expression")
+#I'm not sure why it won't use the same palette as above. There's also a probably more intuitive way to visualize this.... 
+```
+
+```{r}
+juliantplot <- ggplot(data, aes(x = as.numeric(JulianDate), y = HSP70log._GAPDH)) +
+  geom_point(aes(fill=Treatment), shape = 21, colour = "black", size = 3, stroke = 1, width = .2) +
+  scale_fill_manual(values = c("#227c9d", "#fe6d73", "#ffcb77")) +
+  #geom_smooth(color="black", method = "lm", show.legend = FALSE) +
+  geom_smooth(aes(fill=factor(Treatment)), color="black", method = "lm", show.legend = FALSE) +
+  #scale_color_manual(values = c("#00AFBB", "#E7B800"))+
+  #scale_fill_manual(values = c("#00AFBB", "#E7B800")) +
+  xlab("\nJulian Date")+
+  ylab("HSP70\n")+
+  guides(fill=guide_legend(title="Aaaaaaah"))+
+  theme_classic()+
+  theme(
+    axis.title.x = element_text(color="black", size=18),
+    axis.title.y = element_text(color="black", size=18), ## , face="bold"
+    strip.text = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size=13)
+  )
+juliantplot
+```
+
